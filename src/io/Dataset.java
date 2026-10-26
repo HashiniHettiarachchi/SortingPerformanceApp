@@ -21,6 +21,13 @@ public class Dataset {
     private final List<List<String>> rows;
 
     /**
+     * Cached count of numeric (parseable) values per column. Scanning every
+     * value of every column is O(columns x rows), so the loader computes it
+     * once in the background and the UI reuses the counts.
+     */
+    private int[] numericCounts;
+
+    /**
      * @param headers column names, never {@code null}
      * @param rows    data rows, never {@code null}
      * @throws IllegalArgumentException if a row width differs from the header width
@@ -104,6 +111,46 @@ public class Dataset {
     }
 
     /**
+     * Stores the per-column numeric counts computed once by the loader.
+     *
+     * @throws IllegalArgumentException if the array length differs from the
+     *                                  column count
+     */
+    public void setNumericCounts(int[] counts) {
+        if (counts.length != headers.size()) {
+            throw new IllegalArgumentException("Expected one numeric count per column.");
+        }
+        this.numericCounts = counts.clone();
+    }
+
+    /**
+     * Number of values in this column that parse as finite numbers. Uses the
+     * cached count when available and parses on demand otherwise.
+     */
+    public int getNumericValueCount(int columnIndex) {
+        if (numericCounts != null) {
+            return numericCounts[columnIndex];
+        }
+        int good = 0;
+        for (int r = 0; r < rows.size(); r++) {
+            if (isNumeric(getValue(r, columnIndex))) {
+                good++;
+            }
+        }
+        return good;
+    }
+
+    /**
+     * A column is sortable when at least one value parses as a number. Real
+     * survey data often mixes numbers with blanks and unit suffixes, so the
+     * UI offers to sort the numeric values of such mixed columns while
+     * skipping the rest.
+     */
+    public boolean isSortableColumn(int columnIndex) {
+        return getNumericValueCount(columnIndex) > 0;
+    }
+
+    /**
      * Extracts a validated numeric column as primitives for the sort
      * algorithms.
      *
@@ -116,6 +163,23 @@ public class Dataset {
             values[r] = Double.parseDouble(getValue(r, columnIndex));
         }
         return values;
+    }
+
+    /**
+     * Extracts only the parseable values of a column, skipping blank cells
+     * and non-numeric entries. Used for mixed real-world columns, after the
+     * user has confirmed how many values will be left out.
+     */
+    public double[] getNumericColumnSkipping(int columnIndex) {
+        double[] all = new double[rows.size()];
+        int n = 0;
+        for (int r = 0; r < rows.size(); r++) {
+            String text = getValue(r, columnIndex);
+            if (isNumeric(text)) {
+                all[n++] = Double.parseDouble(text.trim());
+            }
+        }
+        return java.util.Arrays.copyOf(all, n);
     }
 
     /** Shared numeric test: trims whitespace, rejects blanks, accepts int/double/scientific. */
